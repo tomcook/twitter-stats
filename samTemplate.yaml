@@ -1,0 +1,62 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Parameters:
+  AccountList:
+    Type: String
+    Description: Comma-separated list of accounts to pull stats
+  RunFrequency:
+    Type: Number
+    Description: How often to run the stats collector
+  TwitterConsumerKey:
+    Type: String
+    NoEcho: 'true'
+    Description: Twitter consumer key
+  TwitterConsumerSecret:
+    Type: String
+    NoEcho: 'true'
+    Description: Twitter consumer secret
+  TwitterAccessToken:
+    Type: String
+    NoEcho: 'true'
+    Description: Twitter access token
+  TwitterAccessSecret:
+    Type: String
+    NoEcho: 'true'
+    Description: Twitter access secret
+  DataDogApiKey:
+    Type: String
+    NoEcho: 'true'
+    Description: DataDog API Key
+  DataDogAppKey:
+    Type: String
+    NoEcho: 'true'
+    Description: DataDog App Key
+  DataDogMetricPrefix:
+    Type: String
+    Description: Name prefix for metrics
+Description: twitter-stats
+Resources:
+  twitterstats:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: main.handle
+      Runtime: python2.7
+      Description: Count key stats for a list of twitter accounts
+      CodeUri: function/
+      MemorySize: 128
+      Timeout: 60
+      Environment:
+        Variables:
+          ACCOUNTS: !Ref AccountList
+          TWITTER_CONSUMER_KEY: !Ref TwitterConsumerKey
+          TWITTER_CONSUMER_SECRET: !Ref TwitterConsumerSecret
+          TWITTER_ACCESS_TOKEN: !Ref TwitterAccessToken
+          TWITTER_ACCESS_SECRET: !Ref TwitterAccessSecret
+          DATADOG_API_KEY: !Ref DataDogApiKey
+          DATADOG_APP_KEY: !Ref DataDogAppKey
+          DATADOG_METRIC_PREFIX: !Ref DataDogMetricPrefix
+      Events:
+        Timer:
+          Type: Schedule
+          Properties:
+            Schedule: !Sub "rate(${RunFrequency} minutes)"

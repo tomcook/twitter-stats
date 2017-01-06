@@ -1,0 +1,368 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Simple stats gathering for twitter accounts
+Parameters:
+  FunctionName:
+    Type: String
+    Description: What to call this function. Used for creating many object names.
+    Default: twitter-stats
+  GitHubToken:
+    NoEcho: 'true'
+    Type: String
+    Description: Secret. Generate at https://github.com/settings/tokens
+  GitHubUser:
+    Type: String
+    Description: GitHub username CodePipeline will auth as to fetch/monitor repos.
+  Repo:
+    Type: String
+    Description: GitHub Repo to pull from. Only the Name. not the URL
+  Branch:
+    Type: String
+    Description: Branch to use from Repo. Only the Name. not the URL
+    Default: master
+  S3LogBucket:
+    Type: String
+    Description: When we create new S3 buckets, this other bucket will receive their S3 access logs. Must be in the same region.
+  AccountList:
+    Type: String
+    Description: Semicolon-separated list of accounts to pull stats
+  RunFrequency:
+    Type: Number
+    Default: 5
+    MinValue: 5
+    Description: How often to run the stats collector (in minutes)
+  TwitterConsumerKey:
+    Type: String
+    NoEcho: 'true'
+    Description: Twitter consumer key
+  TwitterConsumerSecret:
+    Type: String
+    NoEcho: 'true'
+    Description: Twitter consumer secret
+  TwitterAccessToken:
+    Type: String
+    NoEcho: 'true'
+    Description: Twitter access token
+  TwitterAccessSecret:
+    Type: String
+    NoEcho: 'true'
+    Description: Twitter access secret
+  DataDogApiKey:
+    Type: String
+    NoEcho: 'true'
+    Description: API Key. Generate at https://app.datadoghq.com/account/settings#api
+  DataDogAppKey:
+    Type: String
+    NoEcho: 'true'
+    Description: App Key. Generate at https://app.datadoghq.com/account/settings#api
+  DataDogMetricPrefix:
+    Type: String
+    Description: Prefix for the DataDog metric names. Metrics will be named {prefix}{twitter variable name}, with the account name as a tag on the metric. No trailing period.
+    Default: 'twitter'
+
+Metadata:
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+      - Label:
+          default: "Core Settings"
+        Parameters:
+          - AccountList
+          - RunFrequency
+      - Label:
+          default: "GitHub Settings"
+        Parameters:
+          - GitHubUser
+          - Repo
+          - Branch
+          - GitHubToken
+      - Label:
+          default: "Twitter API Credentials"
+        Parameters:
+          - TwitterConsumerKey
+          - TwitterConsumerSecret
+          - TwitterAccessToken
+          - TwitterAccessSecret
+      - Label:
+          default: "DataDog Config"
+        Parameters:
+          - DataDogApiKey
+          - DataDogAppKey
+          - DataDogMetricPrefix
+      - Label:
+          default: "Misc"
+        Parameters:
+          - S3LogBucket
+          - FunctionName
+    ParameterLabels:
+      TwitterConsumerKey:
+        default: "Consumer Key"
+      TwitterConsumerSecret:
+        default: "Consumer Secret"
+      TwitterAccessToken:
+        default: "Access Token"
+      TwitterAccessSecret:
+        default: "Access Secret"
+      DataDogApiKey:
+        default: "API"
+      DataDogAppKey:
+        default: "App"
+      DataDogMetricPrefix:
+        default: "Metric name prefix"
+      S3LogBucket:
+        default: "S3 Log Bucket"
+      GitHubToken:
+        default: "Personal access token"
+      GitHubUser:
+        default: "User"
+      AccountList:
+        default: "Accounts"
+      RunFrequency:
+        default: "Frequency"
+
+Resources:
+
+  # --------------------
+  # Storage locations
+
+  BuildArtifactsBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub '${AWS::AccountId}-codebuild-${FunctionName}-build-artifacts'
+      LoggingConfiguration:
+        DestinationBucketName: !Ref S3LogBucket
+
+  LambdaArtifactsBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub '${AWS::AccountId}-codebuild-${FunctionName}-lambda-artifacts'
+      LoggingConfiguration:
+        DestinationBucketName: !Ref S3LogBucket
+
+  # --------------------
+  # CodeBuild project and resources
+
+  CodeBuildServiceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Action:
+              - 'sts:AssumeRole'
+            Effect: Allow
+            Principal:
+              Service:
+                - codebuild.amazonaws.com
+      Path: /
+      Policies:
+        - PolicyName: CodeBuildAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Action:
+                - 'logs:CreateLogGroup'
+                - 'logs:CreateLogStream'
+                - 'logs:PutLogEvents'
+                Effect: Allow
+                Resource: '*'
+
+              - Action:
+                  - 's3:GetObject'
+                  - 's3:GetObjectVersion'
+                  - 's3:PutObject'
+                  - 's3:List*'
+                Effect: Allow
+                Resource:
+                  - !Sub 'arn:aws:s3:::${BuildArtifactsBucket}/*'
+                  - !Sub 'arn:aws:s3:::${LambdaArtifactsBucket}/*'
+                  - !Sub 'arn:aws:s3:::${LambdaArtifactsBucket}'
+
+
+  CodeBuildProject:
+    Type: AWS::CodeBuild::Project
+    Properties:
+      Name: !Ref FunctionName
+      Description: !Sub '${FunctionName} Lambda function builder'
+      Artifacts:
+        Type: CODEPIPELINE
+      Environment:
+        Type: LINUX_CONTAINER
+        ComputeType: BUILD_GENERAL1_SMALL
+        Image: aws/codebuild/python:2.7.12
+        EnvironmentVariables:
+          - Name: BUILD_OUTPUT_BUCKET
+            Value: !Ref BuildArtifactsBucket
+          - Name: LAMBDA_ARTIFACTS_BUCKET
+            Value: !Ref LambdaArtifactsBucket
+      ServiceRole: !GetAtt CodeBuildServiceRole.Arn
+      Source:
+        Type: CODEPIPELINE
+
+  # --------------------
+  # CodePipeline definition and required roles
+  PipelineExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Action:
+            - 'sts:AssumeRole'
+            Effect: Allow
+            Principal:
+              Service:
+                - codepipeline.amazonaws.com
+      Path: /
+      Policies:
+        - PolicyName: Pipeline
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Action:
+                  - 'iam:PassRole'
+                  - 'codebuild:StartBuild'
+                  - 'codebuild:BatchGetBuilds'
+                  - 'cloudformation:CreateChangeSet'
+                  - 'cloudformation:ExecuteChangeSet'
+                  - 'cloudformation:DeleteChangeSet'
+                  - 'cloudformation:DescribeStacks'
+                  - 'cloudformation:DescribeChangeSet'
+                Effect: Allow
+                Resource: '*'
+
+              - Action:
+                  - 's3:GetObject'
+                  - 's3:PutObject'
+                  - 's3:List*'
+                Effect: Allow
+                Resource:
+                  - !Sub 'arn:aws:s3:::${BuildArtifactsBucket}/*'
+
+  # --------------------
+  # CloudFormation role
+
+  CloudFormationExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Action:
+            - 'sts:AssumeRole'
+            Effect: Allow
+            Principal:
+              Service:
+                - cloudformation.amazonaws.com
+      Path: /
+      Policies:
+        - PolicyName: CFN
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Action:
+                  - 'lambda:*'
+                  - 'iam:CreateRole'
+                  - 'iam:AttachRolePolicy'
+                  - 'iam:GetRole'
+                  - 'iam:PassRole'
+                  - 'iam:DetachRolePolicy'
+                  - 'events:*'
+                  - 'cloudformation:*'
+                Effect: Allow
+                Resource: '*'
+
+              - Action:
+                  - 's3:GetObject'
+                  - 's3:List*'
+                Effect: Allow
+                Resource:
+                  - !Sub 'arn:aws:s3:::${BuildArtifactsBucket}/*'
+                  - !Sub 'arn:aws:s3:::${LambdaArtifactsBucket}/*'
+
+  # --------------------
+  # The Pipeline
+  Pipeline:
+    Type: AWS::CodePipeline::Pipeline
+    Properties:
+      Name: !Ref FunctionName
+      ArtifactStore:
+        Location: !Ref BuildArtifactsBucket
+        Type: S3
+      RoleArn: !GetAtt PipelineExecutionRole.Arn
+      Stages:
+
+      - Name: Source
+        Actions:
+        - InputArtifacts: []
+          Name: Source
+          ActionTypeId:
+            Category: Source
+            Owner: ThirdParty
+            Version: '1'
+            Provider: GitHub
+          OutputArtifacts:
+          - Name: SourceZip
+          Configuration:
+            Owner:  !Ref GitHubUser
+            Repo:   !Ref Repo
+            Branch: !Ref Branch
+            OAuthToken: !Ref GitHubToken
+          RunOrder: 1
+
+      - Name: Build
+        Actions:
+          - Name: CodeBuild
+            ActionTypeId:
+              Category: Build
+              Owner: AWS
+              Provider: CodeBuild
+              Version: 1
+            Configuration:
+              ProjectName: !Ref CodeBuildProject
+            InputArtifacts:
+              - Name: SourceZip
+            OutputArtifacts:
+              - Name: SamTemplate
+
+      - Name: Deploy
+        Actions:
+          - Name: 'Prepare'
+            ActionTypeId:
+              Category: Deploy
+              Owner: AWS
+              Provider: CloudFormation
+              Version: 1
+            InputArtifacts:
+              - Name: SamTemplate
+            Configuration:
+              ActionMode: CHANGE_SET_REPLACE
+              RoleArn: !GetAtt CloudFormationExecutionRole.Arn
+              StackName: !Sub 'lambda-${FunctionName}-function'
+              ChangeSetName: 'changeset'
+              TemplatePath: 'SamTemplate::NewSamTemplate.yaml'
+              Capabilities: 'CAPABILITY_IAM'
+              ParameterOverrides: !Sub |
+                {
+                  "AccountList": "${AccountList}",
+                  "RunFrequency": "${RunFrequency}",
+                  "TwitterConsumerKey": "${TwitterConsumerKey}",
+                  "TwitterConsumerSecret": "${TwitterConsumerSecret}",
+                  "TwitterAccessToken": "${TwitterAccessToken}",
+                  "TwitterAccessSecret": "${TwitterAccessSecret}",
+                  "DataDogApiKey": "${DataDogApiKey}",
+                  "DataDogAppKey": "${DataDogAppKey}",
+                  "DataDogMetricPrefix": "${DataDogMetricPrefix}"
+                }
+            RunOrder: 1
+
+          - Name: 'Execute'
+            ActionTypeId:
+              Category: Deploy
+              Owner: AWS
+              Provider: CloudFormation
+              Version: 1
+            Configuration:
+              ActionMode: CHANGE_SET_EXECUTE
+              ChangeSetName: 'changeset'
+              RoleArn: !GetAtt CloudFormationExecutionRole.Arn
+              StackName: !Sub 'lambda-${FunctionName}-function'
+            RunOrder: 2

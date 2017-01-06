@@ -17,7 +17,7 @@ All-in-one Lambda function for scraping key metrics for a list of twitter accoun
 
 6. Generate a new _Personal Access Key_ in GitHub. [You can do that here](https://github.com/settings/tokens).
 
-7. Download the CloudFormation template in this repo to your local system. [It's here](../cloudformation/twitstats.yaml).
+7. Download the CloudFormation template in this repo to your local system. [It's here](../master/cloudformation/twitter-stats.yaml).
 
 8. [Login to the AWS console](https://console.aws.amazon.com/).
 
@@ -31,7 +31,7 @@ All-in-one Lambda function for scraping key metrics for a list of twitter accoun
 
   - __Stack name__: This needs to be unique to your account & AWS region. A good value here would be `twitter-stats`, but you can make it anything.
   - __Accounts__: A semicolon-separated list of accounts you want to gather stats for. For example: `jack;hillaryclinton;clickhole`. The reason this is semicolon-separated and not comma-separated is boring but in the FAQ below.
-  - __Frequency__: This is the interval, in minutes, that your Lambda will run to gather stats. Minimum is five minutes, since more aggressive checking might annoy the twitter API. This will also determine how much you pay in Lambda costs; the more frequent you check, the more you pay (although Lambda is really cheap, so it will cost almost nothing to run every five minutes) 
+  - __Frequency__: This is the interval, in minutes, that your Lambda will run to gather stats. Minimum is five minutes, since more aggressive checking might annoy the twitter API. This will also determine how much you pay in Lambda costs; the more frequent you check, the more you pay (although Lambda is really cheap, so it will cost almost nothing to run every five minutes)
   - __GitHub Settings__: You should clone this repo, then fill in these details with your username and the repo. Strongly advise against linking to the primary copy of this repo, since I might change code at any time and your AWS account would auto-deploy it with whatever I put in there (!)
   - __DataDog Metric Name Prefix__: The lambda is going to create new metrics in DataDog for each of the monitored twitter metrics. This string will be a prefix on all of the metrics it creates, so if you have an existing namespace then add it here. Created metrics will look like `{prefix}.status_count` plus a tag with the twitter account on the metrics.
   - __S3 Log Bucket__: This CloudFormation is going to create two S3 buckets. Since we follow security-conscious best practices in AWS, those new buckets will be configured to log all read/write activity to another S3 bucket. The log bucket must be in the same region as this CloudFormation template it deployed. You have a few options here:
@@ -90,27 +90,27 @@ Along the way a number of IAM Roles will also be created to allow each of these 
 - __Q:__ _I'm a cool person, web GUIs are lame, and I only want to use CLIs!_
 
   __A:__ Install the [AWS CLI](https://aws.amazon.com/cli/) and follow the instructions [here](http://docs.aws.amazon.com/cli/latest/reference/cloudformation/create-stack.html) to get going. How to adapt the above instructions is left as an exercise for the reader.
-  
+
 - __Q:__ _How do I delete all of this once I've set it up?_
 
   __A:__ In the CloudFormation console, right click on both of the stacks created by this template and select "Delete Stack". Some resources that they create might not be possible to auto-purge and you may need to do that manually. S3 buckets will need to be empty, for example.
-  
+
 - __Q:__ _This should be in [Terraform](https://github.com/hashicorp/terraform) instead of CloudFormation_
 
   __A:__ I agree, Terraform is a much better system overall, but my goals here were to keep this simple and self-contained into as few moving parts as possible. Terraform would have introduced, at minimum, a CLI component and state management. CloudFormation is much simpler and allows all non-code components to fit into a single file. I also wanted to build something complex with CloudFormation as a challenge, since I'm less familiar with it.
-  
+
 - __Q:__ _This seems awfully complicated for less than 50 lines of python and a twitter API client._
 
   __A:__ It is quite a bit, but I wanted to experiment with some of the features announced at AWS's re:Invent 2016 conference (notably CodeBuild), and since the function depends on a third-party library the only other option would be to check-in a compiled zip, which is even more gross. In the past I've used tools like [Apex](https://apex.run) for managing small Lambda projects, but with CodeBuild announced I'm migrating all of my projects off of it onto this workflow.
-  
+
 - __Q:__ _Why did you write this in Python? Also your code is awful_
 
   __A:__ Python is what I'm most confortable with. The code isn't very optimized, does no error handling, and probably has bugs. I'm not worried about this.
-  
+
 - __Q:__ _Why is the account list semicolon-separated and not comma-separated?_
 
   __A:__ CloudFormation has a data type `CommaDelimitedList` that would be perfect here, but because of the wonky way I push the values entered at the CF configuration layer all the way into the Lambda function, it's challenging to convert back and forth from `CommaDelimitedList` to `String` cleanly. I punted on this for now, but it would be a good enhancement in the future.
-  
+
 - __Q:__ _How can I run this on [Google Cloud Functions](https://cloud.google.com/functions/) or [Microsoft Azure Functions](https://azure.microsoft.com/en-us/services/functions/) instead of AWS Lambda?_
 
   __A:__ I have absolutely no idea, but if you port this to another system please let me know!
